@@ -10,14 +10,11 @@ const port = process.env.PORT || 5000
 
 // middle ware
 app.use(cors({
-    origin: ['http://localhost:5173'],
+    origin: ['http://localhost:5173', 'http://localhost:5174'],
     credentials: true
 }));
 app.use(express.json());
 app.use(cookieParser());
-
-
-
 
 
 
@@ -33,30 +30,28 @@ const client = new MongoClient(uri, {
   }
 });
 
-// middleware own
-const logger = async(req, res, next) =>{
-    console.log('Called:', req.host, req.originalUrl);
+//middleware own
+const logger = (req, res, next) => {
+    console.log('log info', req.method, req.url);
     next();
 }
 
-const verifyToken = async(req, res, next)=>{
+const verifyToken = (req, res, next) => {
     const token = req.cookies?.token;
-    console.log('Value of Token in Middleware:', token);
+    // console.log('Token in the middleware:', token);
     if(!token){
-        return res.status(401).send({message: 'Not Authorised'})
+        return req.status(401).send({message: 'unauthorized access'})
     }
     jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded)=>{
-        // error
         if(err){
-            console.log(err);
-            return res.status(401).send({message: 'Unauthorised'}) 
+            return req.status(401).send({message: 'unauthorized access'})
         }
-        // if token is valid then it would be decoded
-        console.log('Value in the token de:', decoded);
         req.user = decoded;
         next();
     })
+    // next();
 }
+
 
 async function run() {
   try {
@@ -66,29 +61,31 @@ async function run() {
     const serviceCollection = client.db('carDoctor').collection('services')
     const bookingCollection = client.db('carDoctor').collection('bookings')
 
-    // authentication
-    app.post('/jwt', logger, async(req, res) => {
+    // auth related
+    app.post('/jwt', (req, res) => {
         const user = req.body;
-        console.log(user); // Check if the user object is correct
-        const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
-        res
-            .cookie('token', token, {
-                httpOnly: true,
-                secure: false, // In production, set this to true
-                // sameSite: 'none'
-            })
-            .send({ success: true });
-    });
+        console.log('User For Token', user);
     
+        const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1hr' });
+    
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: true,  // change to true in production
+            sameSite: 'none'
+        }).send({ success: true });
+    });
 
+    app.post('/logout', async(req, res)=>{
+        const user = req.body;
+        console.log('logging out', user);
+        res.clearCookie('token', {maxAge: 0}).send({success: true})
 
-
-
+    })
 
     // services
 
     // send all services
-    app.get('/services', logger, async(req, res)=>{
+    app.get('/services', async(req, res)=>{
         const cursor = serviceCollection.find()
         const result = await cursor.toArray()
         res.send(result)
@@ -110,10 +107,10 @@ async function run() {
 
     // booking
     app.get('/bookings', logger, verifyToken, async(req, res) => {
-        // console.log('token: ', req.cookies.token);
-        console.log('user in the valid token',req.user);
-        if(req.query.email !== req.user.email){
-            return res.status(403).send({message: 'Forbidden Access'})
+        console.log(req.query.email);
+        console.log('Token owner info', req.user);
+        if(req.user.email !== req.query.email){
+            return req.status(403).send({message: 'Forbidden'})
         }
         let query = {}
         if (req.query?.email){
